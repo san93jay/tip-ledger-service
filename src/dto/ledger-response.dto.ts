@@ -19,7 +19,7 @@ export class LedgerResponseDto {
   tipIntent: TipIntentDto;
 
   @ApiProperty({
-    example: { id: '4a1b5285-1cc3-4f5e-96ec-a708e8f3fcc0', name: 'John Doe' },
+    example: { id: '4a1b5285-1cc3-4f5e-96ec-a708e8f3fcc0', name: 'Sanjay Vishwakarma' },
     required: false,
   })
   employee?: { id: string; name: string };

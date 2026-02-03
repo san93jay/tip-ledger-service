@@ -27,7 +27,7 @@ export class SignupDto {
   role: 'merchant' | 'employee';
 
   @ApiProperty({
-    example: 'John Doe',
+    example: 'Sanjay Vishwakarma',
     description: 'Full name of the user',
   })
   @IsString()
