@@ -3,7 +3,7 @@ import { INestApplication } from '@nestjs/common';
 import request from 'supertest';
 import { AppModule } from '../../src/app.module';
 import { getRepositoryToken } from '@nestjs/typeorm';
-import { TipIntent, TipStatus } from 'src/entities/TipIntent.entity';
+import { TipIntent, TipStatus } from '../../src/entities/TipIntent.entity';
 import { Repository } from 'typeorm';
 
 describe('EmployeesController (e2e)', () => {

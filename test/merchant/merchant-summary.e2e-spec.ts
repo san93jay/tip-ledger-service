@@ -3,9 +3,9 @@ import { INestApplication } from '@nestjs/common';
 import request from 'supertest';
 import { AppModule } from '../../src/app.module';
 import { getRepositoryToken } from '@nestjs/typeorm';
-import { TipIntent, TipStatus } from 'src/entities/TipIntent.entity';
-import { Employee } from 'src/entities/Employee.entity';
-import { TableQR } from 'src/tables/TableQR.entity';
+import { TipIntent, TipStatus } from '../../src/entities/TipIntent.entity';
+import { Employee } from '../../src/entities/Employee.entity';
+import { TableQR } from '../../src/tables/TableQR.entity';
 import { Repository } from 'typeorm';
 
 describe('MerchantsController (e2e)', () => {
