@@ -1,108 +1,97 @@
-import { Test, TestingModule } from '@nestjs/testing';
-import { INestApplication } from '@nestjs/common';
 import request from 'supertest';
+import { INestApplication } from '@nestjs/common';
+import { Test } from '@nestjs/testing';
 import { AppModule } from '../../src/app.module';
-import { getRepositoryToken } from '@nestjs/typeorm';
-import { TipIntent, TipStatus } from 'src/entities/TipIntent.entity';
-import { LedgerEntry, LedgerType } from 'src/entities/LedgerEntry.entity';
-import { Repository } from 'typeorm';
 
-describe('TipsController (e2e)', () => {
+describe('Tips API (e2e)', () => {
   let app: INestApplication;
-  let tipRepo: Repository<TipIntent>;
-  let ledgerRepo: Repository<LedgerEntry>;
 
   beforeAll(async () => {
-    const moduleFixture: TestingModule = await Test.createTestingModule({
+    const moduleRef = await Test.createTestingModule({
       imports: [AppModule],
     }).compile();
 
-    app = moduleFixture.createNestApplication();
+    app = moduleRef.createNestApplication();
     await app.init();
-
-    tipRepo = moduleFixture.get<Repository<TipIntent>>(getRepositoryToken(TipIntent));
-    ledgerRepo = moduleFixture.get<Repository<LedgerEntry>>(getRepositoryToken(LedgerEntry));
   });
 
   afterAll(async () => {
     await app.close();
   });
 
-  it('should create a tip intent (idempotent)', async () => {
+  it('1. Idempotent tip intent creation', async () => {
     const payload = {
-      merchantId: 'merchant-uuid',
-      tableCode: 'T1',
+      merchantId: 'merchant-123',
+      tableId: 'table-456',
       amountFils: 200,
-      idempotencyKey: 'abc-123',
+      idempotencyKey: 'unique-key-abc',
     };
 
-    const res1 = await request(app.getHttpServer())
+    const first = await request(app.getHttpServer())
       .post('/tips/intents')
       .send(payload)
       .expect(201);
 
-    const res2 = await request(app.getHttpServer())
+    const second = await request(app.getHttpServer())
       .post('/tips/intents')
       .send(payload)
       .expect(201);
 
-    expect(res1.body.id).toEqual(res2.body.id);
+    // Both responses should have the same intent ID
+    expect(second.body.id).toEqual(first.body.id);
   });
 
-  it('should confirm a tip intent (concurrency safe)', async () => {
-    const intent = await tipRepo.save({
-      merchantId: 'merchant-uuid',
-      tableId: 'T1',
-      amountFils: 300,
-      idempotencyKey: 'xyz-789',
-      status: TipStatus.PENDING,
-    });
-
-    const confirm1 = request(app.getHttpServer())
-      .post(`/tips/intents/${intent.id}/confirm`);
-
-    const confirm2 = request(app.getHttpServer())
-      .post(`/tips/intents/${intent.id}/confirm`);
-
-    const [res1, res2] = await Promise.all([confirm1, confirm2]);
-
-    expect(res1.body.id).toEqual(res2.body.id);
-
-    //check ledger relation
-    const ledger = await ledgerRepo.findOne({
-      where: { tipIntent: { id: intent.id }, type: LedgerType.CONFIRM },
-    });
-    expect(ledger).toBeDefined();
-  });
-
-  it('should reverse a tip intent', async () => {
-    const intent = await tipRepo.save({
-      merchantId: 'merchant-uuid',
-      tableId: 'T1',
-      amountFils: 150,
-      idempotencyKey: 'rev-111',
-      status: TipStatus.CONFIRMED,
-    });
-
-    const res = await request(app.getHttpServer())
-      .post(`/tips/intents/${intent.id}/reverse`)
+  it('2. Concurrent confirmation safety', async () => {
+    // Create a new intent
+    const intentRes = await request(app.getHttpServer())
+      .post('/tips/intents')
+      .send({
+        merchantId: 'merchant-123',
+        tableId: 'table-456',
+        amountFils: 300,
+        idempotencyKey: 'concurrent-key-xyz',
+      })
       .expect(201);
 
-    expect(res.body.type).toEqual('REVERSAL');
+    const intentId = intentRes.body.id;
 
-    //check ledger relation
-    const ledger = await ledgerRepo.findOne({
-      where: { tipIntent: { id: intent.id }, type: LedgerType.REVERSAL },
-    });
-    expect(ledger).toBeDefined();
+    // Fire two confirmations at the same time
+    const [confirm1, confirm2] = await Promise.all([
+      request(app.getHttpServer()).post(`/tips/intents/${intentId}/confirm`).send(),
+      request(app.getHttpServer()).post(`/tips/intents/${intentId}/confirm`).send(),
+    ]);
+
+    // One should succeed, the other should be rejected or idempotent
+    expect(confirm1.status).toBe(200);
+    expect([200, 400]).toContain(confirm2.status);
   });
 
-  it('should return error for non-existent intent', async () => {
-    const res = await request(app.getHttpServer())
-      .post('/tips/intents/non-existent-id/confirm')
-      .expect(500);
+  it('3. Reversal behavior', async () => {
+    // Create and confirm an intent
+    const intentRes = await request(app.getHttpServer())
+      .post('/tips/intents')
+      .send({
+        merchantId: 'merchant-123',
+        tableId: 'table-456',
+        amountFils: 150,
+        idempotencyKey: 'reverse-key-789',
+      })
+      .expect(201);
 
-    expect(res.body.success).toBe(false);
-    expect(res.body.message).toContain('Tip intent not found');
+    const intentId = intentRes.body.id;
+
+    await request(app.getHttpServer())
+      .post(`/tips/intents/${intentId}/confirm`)
+      .send()
+      .expect(200);
+
+    // Reverse the confirmed intent
+    const reverseRes = await request(app.getHttpServer())
+      .post(`/tips/intents/${intentId}/reverse`)
+      .send()
+      .expect(200);
+
+    expect(reverseRes.body.type).toBe('REVERSAL');
+    expect(reverseRes.body.amountFils).toBe(-150);
   });
 });

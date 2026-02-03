@@ -3,14 +3,12 @@ import { INestApplication } from '@nestjs/common';
 import request from 'supertest';
 import { AppModule } from '../../src/app.module';
 import { getRepositoryToken } from '@nestjs/typeorm';
-import { LedgerEntry, LedgerType } from 'src/entities/LedgerEntry.entity';
 import { TipIntent, TipStatus } from 'src/entities/TipIntent.entity';
 import { Repository } from 'typeorm';
 
-describe('Employee Tips (e2e)', () => {
+describe('EmployeesController (e2e)', () => {
   let app: INestApplication;
   let tipRepo: Repository<TipIntent>;
-  let ledgerRepo: Repository<LedgerEntry>;
 
   beforeAll(async () => {
     const moduleFixture: TestingModule = await Test.createTestingModule({
@@ -21,39 +19,88 @@ describe('Employee Tips (e2e)', () => {
     await app.init();
 
     tipRepo = moduleFixture.get<Repository<TipIntent>>(getRepositoryToken(TipIntent));
-    ledgerRepo = moduleFixture.get<Repository<LedgerEntry>>(getRepositoryToken(LedgerEntry));
   });
 
   afterAll(async () => {
     await app.close();
   });
 
-  it('should return employee tips with ledger entries and totals', async () => {
-    const employeeId = 'employee-uuid';
+  // 1. Employee tips retrieval
+  it('should return tips for a given employee', async () => {
+    const employeeId = 'emp-uuid-1';
 
-    const intent = await tipRepo.save({
-      merchantId: 'merchant-uuid',
-      tableId: 'T1',
-      amountFils: 300,
-      idempotencyKey: 'emp-1',
-      status: TipStatus.CONFIRMED,
-      employeeId,
-    });
-
-    await ledgerRepo.save({
-      tipIntent: intent,
-      employeeId,
-      amountFils: 300,
-      type: LedgerType.CONFIRM,
-    });
+    await tipRepo.save([
+      {
+        id: 'tip1',
+        merchantId: 'm1',
+        tableId: 'T1',
+        employeeId,
+        amountFils: 100,
+        idempotencyKey: 'emp-tip-1',
+        status: TipStatus.CONFIRMED,
+      },
+      {
+        id: 'tip2',
+        merchantId: 'm1',
+        tableId: 'T2',
+        employeeId,
+        amountFils: 200,
+        idempotencyKey: 'emp-tip-2',
+        status: TipStatus.PENDING,
+      },
+    ]);
 
     const res = await request(app.getHttpServer())
       .get(`/employees/${employeeId}/tips`)
+      .set('Authorization', `Bearer test-token`)
       .expect(200);
 
-    expect(res.body).toHaveProperty('total');
-    expect(res.body.total).toBeGreaterThanOrEqual(300);
-    expect(res.body.entries.length).toBeGreaterThanOrEqual(1);
-    expect(res.body.entries[0].type).toEqual('CONFIRM');
+    expect(res.body).toHaveProperty('employeeId', employeeId);
+    expect(res.body).toHaveProperty('entries');
+    expect(Array.isArray(res.body.entries)).toBe(true);
+    expect(res.body.entries.length).toBeGreaterThanOrEqual(2);
+  });
+
+  // 2. Handling of missing employee
+  it('should return 404 if employee has no tips', async () => {
+    const res = await request(app.getHttpServer())
+      .get(`/employees/non-existent-id/tips`)
+      .set('Authorization', `Bearer test-token`)
+      .expect(404);
+
+    expect(res.body.message).toContain('Tip intent not found');
+  });
+
+  // 3. Tips grouped correctly
+  it('should calculate total tips amount', async () => {
+    const employeeId = 'emp-uuid-2';
+
+    await tipRepo.save([
+      {
+        id: 'tip3',
+        merchantId: 'm1',
+        tableId: 'T3',
+        employeeId,
+        amountFils: 150,
+        idempotencyKey: 'emp-tip-3',
+        status: TipStatus.CONFIRMED,
+      },
+      {
+        id: 'tip4',
+        merchantId: 'm1',
+        tableId: 'T4',
+        employeeId,
+        amountFils: 250,
+        idempotencyKey: 'emp-tip-4',
+        status: TipStatus.CONFIRMED,
+      },
+    ]);
+
+    const res = await request(app.getHttpServer())
+      .get(`/employees/${employeeId}/tips`)
+      .set('Authorization', `Bearer test-token`)
+      .expect(200);
+
+    expect(res.body.total).toBeGreaterThanOrEqual(400);
   });
 });

@@ -50,7 +50,6 @@ export class TipsService {
         where: { merchant: { id: dto.merchantId }, name: dto.employeeHint },
       });
     }
-   console.log("employee :"+ employee?.name);
     const intent = manager.create(TipIntent, {
       merchantId: dto.merchantId,
       table,
@@ -62,7 +61,7 @@ export class TipsService {
     });
 
     const finalIntent= manager.save(intent);
-    await this.publisher.publish('TIP_PENDING', intent);
+    await this.publisher.publish('TIP_INTENT_CREATED', intent);
     return finalIntent;
   });
 }

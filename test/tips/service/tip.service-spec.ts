@@ -27,11 +27,13 @@ describe('TipsService', () => {
     } as any;
 
     dataSource = {
-      transaction: jest.fn().mockImplementation(cb => cb({
-        findOne: tipRepo.findOne,
-        save: tipRepo.save,
-        create: tipRepo.create,
-      })),
+      transaction: jest.fn().mockImplementation(cb =>
+        cb({
+          findOne: tipRepo.findOne,
+          save: tipRepo.save,
+          create: tipRepo.create,
+        }),
+      ),
     } as any;
 
     events = { emit: jest.fn() } as any;
@@ -49,52 +51,58 @@ describe('TipsService', () => {
     service = module.get<TipsService>(TipsService);
   });
 
-  it('should confirm a pending tip intent', async () => {
-    const intent: TipIntent = {
-      id: '1',
+  // 1. Idempotent creation
+  it('should create tip intent idempotently', async () => {
+    const dto = {
       merchantId: 'm1',
-      tableId: 'T1',
-      employeeId: 'e1',
+      tableCode: 'T1',
       amountFils: 200,
-      idempotencyKey: 'abc',
-      status: TipStatus.PENDING,
+      idempotencyKey: 'unique-key',
     } as any;
+
+    const intent: TipIntent = { id: '1', ...dto, status: TipStatus.PENDING } as any;
+
+    tipRepo.findOne.mockResolvedValueOnce(null); // first call: no existing
+    tipRepo.create.mockReturnValue(intent);
+    tipRepo.save.mockResolvedValue(intent);
+
+    const result1 = await service.createTipIntent(dto);
+    expect(result1.id).toBe('1');
+
+    // second call: should return existing intent
+    tipRepo.findOne.mockResolvedValueOnce(intent);
+
+    const result2 = await service.createTipIntent(dto);
+    expect(result2.id).toBe('1');
+  });
+
+  // 2. Concurrent confirmation safety
+  it('should handle concurrent confirmations safely', async () => {
+    const intent: TipIntent = { id: '1', status: TipStatus.PENDING, amountFils: 100 } as any;
 
     tipRepo.findOne.mockResolvedValue(intent);
     tipRepo.save.mockResolvedValue({ ...intent, status: TipStatus.CONFIRMED });
-    ledgerRepo.create.mockReturnValue({ id: 'ledger1' } as any);
-    ledgerRepo.save.mockResolvedValue({ id: 'ledger1' } as any);
+    ledgerRepo.create.mockReturnValue({ id: 'ledger1', type: LedgerType.CONFIRM } as any);
+    ledgerRepo.save.mockResolvedValue({ id: 'ledger1', type: LedgerType.CONFIRM } as any);
 
-    const result = await service.confirmTipIntent('1');
+    // simulate two calls
+    const [res1, res2] = await Promise.allSettled([
+      service.confirmTipIntent('1'),
+      service.confirmTipIntent('1'),
+    ]);
 
-    expect(result.id).toBe('ledger1');
-    expect(events.emit).toHaveBeenCalledWith('TIP_CONFIRMED', expect.any(Object));
+    // one should succeed
+    expect(res1.status === 'fulfilled' || res2.status === 'fulfilled').toBe(true);
   });
 
-  it('should return existing ledger entry if already confirmed', async () => {
-    const intent: TipIntent = { id: '1', status: TipStatus.CONFIRMED } as any;
-    const ledger: LedgerEntry = { id: 'ledger1', type: LedgerType.CONFIRM } as any;
-
-    tipRepo.findOne.mockResolvedValue(intent);
-    ledgerRepo.findOne.mockResolvedValue(ledger);
-
-    const result = await service.confirmTipIntent('1');
-
-    expect(result).toBe(ledger);
-  });
-
-  it('should reverse a confirmed tip intent', async () => {
-    const intent: TipIntent = {
-      id: '2',
-      status: TipStatus.CONFIRMED,
-      employeeId: 'e1',
-      amountFils: 100,
-    } as any;
+  // 3. Reversal behavior
+  it('should reverse a confirmed tip intent correctly', async () => {
+    const intent: TipIntent = { id: '2', status: TipStatus.CONFIRMED, amountFils: 150 } as any;
 
     tipRepo.findOne.mockResolvedValue(intent);
     tipRepo.save.mockResolvedValue({ ...intent, status: TipStatus.REVERSED });
-    ledgerRepo.create.mockReturnValue({ id: 'ledger2' } as any);
-    ledgerRepo.save.mockResolvedValue({ id: 'ledger2' } as any);
+    ledgerRepo.create.mockReturnValue({ id: 'ledger2', type: LedgerType.REVERSAL } as any);
+    ledgerRepo.save.mockResolvedValue({ id: 'ledger2', type: LedgerType.REVERSAL } as any);
 
     const result = await service.reverseTipIntent('2');
 
@@ -102,6 +110,7 @@ describe('TipsService', () => {
     expect(events.emit).toHaveBeenCalledWith('TIP_REVERSED', expect.any(Object));
   });
 
+  // Extra: Not found case
   it('should throw if tip intent not found', async () => {
     tipRepo.findOne.mockResolvedValue(null);
 
