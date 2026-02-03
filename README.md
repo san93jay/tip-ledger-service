@@ -14,7 +14,8 @@ Prerequisites to Install
 Steps to Run the Project
 - Clone the repository
 
-cd <project-folder>
+- goto project director by -
+  cd <project-folder>
 - Install dependencies
 npm install
 
