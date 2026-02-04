@@ -93,4 +93,17 @@ Entities and Relationships
 - Concurrency Handling
 Transactions: All state changes (create, confirm, reverse) run inside database transactions.
 - Locks: pessimistic_write locks are used when confirming or reversing intents to prevent race conditions.
-- At-least-once delivery: Consumers are designed to handle duplicate events safely by checking for existing side effects.
+- At-least-once delivery: Consumers are designed to handle duplicate events safely by checking for  
+existing side effects.
+
+- Swagger url to see all end point
+http://localhost:3000/api-docs
+
+
+- System intraction step
+1. First signup as merchant
+2. Create table
+3. Create Employee
+4. Create intent and then process all flow like confirm and reversal
+5. Login as Merchant and see Dashboard
+6. Login as Employee and see Dashboard

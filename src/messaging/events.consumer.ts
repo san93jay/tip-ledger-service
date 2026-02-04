@@ -24,8 +24,6 @@ export class EventsConsumer implements OnModuleInit {
     this.conn = await require('amqplib').connect('amqp://localhost');
     this.channel = await this.conn.createChannel();
     await this.channel.assertExchange('tips.events', 'fanout', { durable: true });
-
-    // Durable queue
     await this.channel.assertQueue('tips.queue', { durable: true });
     await this.channel.bindQueue('tips.queue', 'tips.events', '');
   }
@@ -42,13 +40,13 @@ export class EventsConsumer implements OnModuleInit {
 
         switch (event) {
           case 'TIP_INTENT_CREATED':
-            await this.handleTipIntentCreated(payload);
+            await this.processLedgerEvent(payload, LedgerType.INTENT);
             break;
           case 'TIP_CONFIRMED':
-            await this.handleTipConfirmed(payload);
+            await this.processLedgerEvent(payload, LedgerType.CONFIRM);
             break;
           case 'TIP_REVERSED':
-            await this.handleTipReversed(payload);
+            await this.processLedgerEvent(payload, LedgerType.REVERSAL);
             break;
           default:
             this.logger.warn(`Unknown event: ${event}`);
@@ -57,65 +55,38 @@ export class EventsConsumer implements OnModuleInit {
         this.channel.ack(msg);
       } catch (err) {
         this.logger.error(`Failed to process message: ${err.message}`);
-        // Optionally: nack with requeue=false to avoid infinite retries
         this.channel.nack(msg, false, false);
       }
     });
   }
 
-  private async handleTipIntentCreated(payload: any) {
-    this.logger.debug(`Handling TIP_INTENT_CREATED for ${payload.id}`);
+  private async processLedgerEvent(payload: any, type: LedgerType) {
+    const tipIntentId = payload?.tipIntentId;
+    const amountFils = payload?.amountFils;
 
-    // Idempotency check: has this intent already been recorded?
-    const existing = await this.ledgerRepo.findOne({
-      where: { tipIntent: { id: payload.id }, type: LedgerType.INTENT },
-    });
+    this.logger.debug(`Handling ${type} for ${tipIntentId}`);
 
-    if (existing) {
-      this.logger.log(`Duplicate TIP_INTENT_CREATED ignored for ${payload.id}`);
+    if (!tipIntentId || typeof amountFils !== 'number') {
+      this.logger.error(`Missing or invalid tipIntent data`);
       return;
     }
 
-    // Record the intent creation in the ledger
+    const existing = await this.ledgerRepo.findOne({
+      where: { tipIntent: { id: tipIntentId }, type },
+    });
+
+    if (existing) {
+      this.logger.log(`Duplicate ${type} ignored for ${tipIntentId}`);
+      return;
+    }
+
     const ledger = this.ledgerRepo.create({
-      tipIntent: { id: payload.id } as any,
-      amountFils: payload.amountFils,
-      type: LedgerType.INTENT,
+      tipIntent: { id: tipIntentId } as any,
+      amountFils,
+      type,
     });
 
     await this.ledgerRepo.save(ledger);
-    this.logger.log(`TIP_INTENT_CREATED processed for ${payload.id}`);
-  }
-
-  private async handleTipConfirmed(payload: any) {
-    this.logger.debug(`Handling TIP_CONFIRMED for ${payload.tipIntent?.id}`);
-
-    const existing = await this.ledgerRepo.findOne({
-      where: { tipIntent: { id: payload.tipIntent?.id }, type: LedgerType.CONFIRM },
-    });
-
-    if (existing) {
-      this.logger.log(`Duplicate TIP_CONFIRMED ignored for ${payload.tipIntent?.id}`);
-      return;
-    }
-
-    await this.ledgerRepo.save(payload);
-    this.logger.log(`TIP_CONFIRMED processed for ${payload.tipIntent?.id}`);
-  }
-
-  private async handleTipReversed(payload: any) {
-    this.logger.debug(`Handling TIP_REVERSED for ${payload.tipIntent?.id}`);
-
-    const existing = await this.ledgerRepo.findOne({
-      where: { tipIntent: { id: payload.tipIntent?.id }, type: LedgerType.REVERSAL },
-    });
-
-    if (existing) {
-      this.logger.log(`Duplicate TIP_REVERSED ignored for ${payload.tipIntent?.id}`);
-      return;
-    }
-
-    await this.ledgerRepo.save(payload);
-    this.logger.log(`TIP_REVERSED processed for ${payload.tipIntent?.id}`);
+    this.logger.log(`${type} processed for ${tipIntentId}`);
   }
 }
